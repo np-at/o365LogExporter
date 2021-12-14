@@ -117,6 +117,31 @@ func NewApiClientWithCustomEndpoint(tenantID, applicationID, clientSecret string
 	return &g, nil
 }
 
+type object struct {
+}
+
+// performRequestWithoutMarshal performs the http request but returns the response as []byte
+func (g *ApiClient) performRequestForUnknown(req *http.Request, response *[]byte) (nextPageUri string, err error) {
+	httpClient := &http.Client{
+		Timeout: time.Second * 10,
+	}
+
+	resp, err := httpClient.Do(req)
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+
+	}(resp.Body) // close body when func returns
+	*response, err = ioutil.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		// Hint: this will mostly be the case if the tenant ID cannot be found, the Application ID cannot be found or the clientSecret is incorrect.
+		// The cause will be described in the body, hence we have to return the body too for proper error-analysis
+		return "", fmt.Errorf("StatusCode is not OK: %v. Body: %v ", resp.StatusCode, string(*response))
+	}
+	nextPageUri = resp.Header.Get("NextPageUri")
+
+	return nextPageUri, nil
+}
+
 // performRequest performs a pre-prepared http.Request and does the proper error-handling for it.
 // does a json.Unmarshal into the v interface{} and returns the error of it if everything went well so far.
 func (g *ApiClient) performRequest(req *http.Request, v interface{}) (string, error) {
@@ -128,10 +153,8 @@ func (g *ApiClient) performRequest(req *http.Request, v interface{}) (string, er
 		return "", fmt.Errorf("HTTP response error: %v of http.Request: %v", err, req.URL)
 	}
 	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
+		_ = Body.Close()
 
-		}
 	}(resp.Body) // close body when func returns
 
 	body, err := ioutil.ReadAll(resp.Body) // read body first to append it to the error (if any)

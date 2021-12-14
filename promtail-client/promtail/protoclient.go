@@ -26,16 +26,15 @@ type clientProto struct {
 	hashMap   *hashmap.HashMap
 }
 
-func (c *clientProto) LogRaw(message string, labels *map[string]string) {
-
-	labelString := *makeLabelString(labels, &c.config.Labels)
+func (c *clientProto) LogRaw(message string, labels *map[string]string, level LogLevel) {
+	mergedKeys, _ := mergeKeys_string(*labels, c.config.Labels)
 	c.entries <- protoLogEntry{
 		entry: logproto.Entry{
-			Timestamp: time.Now(),
+			Timestamp: time.Now().UTC(),
 			Line:      message,
 		},
-
-		labels: labelString,
+		level:  level,
+		labels: *makeLabelString(&mergedKeys, &c.config.Labels),
 	}
 }
 
@@ -115,6 +114,7 @@ func (c *clientProto) run2() {
 			return
 
 		case entry := <-c.entries:
+			log.Printf("hashmap has %v entries before", c.hashMap.Len())
 			if entry.level >= c.config.PrintLevel {
 				log.Print(entry.entry.Line)
 			}
@@ -122,9 +122,8 @@ func (c *clientProto) run2() {
 				var streamEntry = []logproto.Entry{
 					{Timestamp: entry.entry.Timestamp, Line: entry.entry.Line},
 				}
-				actual, loaded := c.hashMap.GetOrInsert(entry.labels, streamEntry)
-				if loaded {
-					actual = append((actual).([]logproto.Entry), streamEntry...)
+				if actual, loaded := c.hashMap.GetOrInsert(entry.labels, streamEntry); loaded {
+					c.hashMap.Set(entry.labels, append((actual).([]logproto.Entry), streamEntry...))
 				}
 				batchSize++
 				if batchSize >= c.config.BatchEntriesNumber {
@@ -151,7 +150,7 @@ func (c *clientProto) run2() {
 	}
 }
 func (c *clientProto) flush() error {
-	log.Print("starting flush operation on protoclient")
+	log.Printf("starting flush operation on protoclient, hashmap has %v entries", c.hashMap.Len())
 	var streams []logproto.Stream
 	for entry := range c.hashMap.Iter() {
 		streams = append(streams, logproto.Stream{Labels: (entry.Key).(string), Entries: (entry.Value).([]logproto.Entry)})
@@ -170,7 +169,7 @@ func (c *clientProto) flush() error {
 }
 
 func (c *clientProto) handlePushRequest(pRequest *logproto.PushRequest) error {
-	buf, err := (*pRequest).Marshal()
+	buf, err := pRequest.Marshal()
 	buf = snappy.Encode(nil, buf)
 	resp, body, err := c.client.sendReq(http.MethodPost, c.config.PushURL, "application/x-protobuf", &buf)
 	if err != nil {

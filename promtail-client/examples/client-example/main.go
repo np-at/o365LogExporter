@@ -9,12 +9,12 @@ import (
 )
 
 func displayUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s proto|json source-name job-name\n", os.Args[0])
+	_, _ = fmt.Fprintf(os.Stderr, "Usage: %s proto|json source-name job-name\n", os.Args[0])
 	os.Exit(1)
 }
 
 func displayInvalidName(arg string) {
-	fmt.Fprintf(os.Stderr, "Invalid %s: allowed characters are a-zA-Z0-9_-\n", arg)
+	_, _ = fmt.Fprintf(os.Stderr, "Invalid %s: allowed characters are a-zA-Z0-9_-\n", arg)
 	os.Exit(1)
 }
 

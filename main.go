@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cornelk/hashmap"
 	"github.com/google/uuid"
 	"github.com/urfave/cli/v2"
 	"log"
@@ -11,10 +12,12 @@ import (
 	"net/url"
 	"o365_management_api/promtail-client/promtail"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
 
+const useLokiFlagString = "loki_output"
 const MAX_ENTRIES_CHAN_SIZE = 10000
 
 var TenantID string      // See https://docs.microsoft.com/en-us/azure/azure-resource-manager/resource-group-create-service-principal-portal#get-tenant-id
@@ -22,11 +25,13 @@ var ApplicationID string // See https://docs.microsoft.com/en-us/azure/azure-res
 var ClientSecret string  //
 var pubId string
 var currentTime time.Time
+var currentTimeUnixString string
 var chunkDuration time.Duration
 var chunkCount int
 
 func main() {
 	currentTime = time.Now().UTC()
+	currentTimeUnixString = strconv.FormatInt(currentTime.Unix(), 10)
 	chunkDuration = time.Hour * 24
 	chunkCount = 7
 
@@ -68,7 +73,7 @@ func main() {
 				Name: "Sharepoint",
 			},
 			&cli.BoolFlag{Name: "DLP"},
-			&cli.BoolFlag{Name: "loki_output"},
+			&cli.BoolFlag{Name: useLokiFlagString},
 			&cli.BoolFlag{
 				Name:    "debug",
 				Aliases: []string{"d"},
@@ -87,69 +92,58 @@ func main() {
 
 }
 
-func (g *ApiClient) getContentForType(contentType string, debug bool, waitGroup *sync.WaitGroup, ctx context.Context) error {
-	for i := 0; i < chunkCount; i++ {
-		waitGroup.Add(1)
-		go func(wg *sync.WaitGroup, idx int, contentType string, ctime time.Time, debug bool, ctx context.Context) {
-			// add 'token' to channel to keep track of concurrency (will block if concurrency limit is met
-			//semaphorChan <- struct{}{}
-			offset := time.Duration(chunkDuration.Nanoseconds() * (int64)(idx))
-			startTime := ctime.Add(-offset).Add(-chunkDuration)
-			endTime := ctime.Add(-offset)
+var availableContentChan chan ListAvailableContentResponse
+var retrievedContentObjects chan interface{}
 
-			availContent, err := g.ListAvailableContent(startTime, endTime, contentType, ctx)
-			if err != nil {
-				log.Fatal(err)
-			}
-			for _, contentResponse := range availContent {
-				availableCount <- struct{}{}
-				availableContentChan <- &contentResponse
-			}
-			// remove token from semaphor to allow another to start
-			//<-semaphorChan
-
-			wg.Done()
-		}(waitGroup, i, contentType, currentTime, debug, ctx)
-	}
-	return nil
-}
-
-var availableContentChan chan *ListAvailableContentResponse
-var accumulatedContentChan chan *RetrievedContentObject
-
-var collectedCount chan struct{}
-var availableCount chan struct{}
+var tracker *Tracker
 
 func runFunc(context *cli.Context) error {
-	var wg sync.WaitGroup
-	conf := promtail.ClientConfig{
-		PushURL:            "http://127.0.0.1:3100/loki/api/v1/push",
-		Labels:             map[string]string{"job": "o365test2"},
-		SendLevel:          promtail.DEBUG,
-		PrintLevel:         promtail.DISABLE,
-		BatchWait:          time.Second * 5,
-		BatchEntriesNumber: 1000,
+	tracker = &Tracker{
+		hashSet:         hashmap.HashMap{},
+		historyFilePath: "histfile",
 	}
-	loki, err := promtail.NewClientProto(conf)
+	tracker.load()
 
-	collectedCount = make(chan struct{}, MAX_ENTRIES_CHAN_SIZE)
-	availableCount = make(chan struct{}, MAX_ENTRIES_CHAN_SIZE)
+	for value := range tracker.hashSet.Iter() {
+		log.Printf("key: %v, value: %v", value.Key, value.Value)
+	}
+	var wg sync.WaitGroup
+	var loki promtail.Client
+	if context.Bool(useLokiFlagString) {
+		conf := promtail.ClientConfig{
+			PushURL:            "http://127.0.0.1:3100/loki/api/v1/push",
+			Labels:             map[string]string{"job": "o365test2"},
+			SendLevel:          promtail.DEBUG,
+			PrintLevel:         promtail.DISABLE,
+			BatchWait:          time.Second * 5,
+			BatchEntriesNumber: 500,
+		}
+		var err error
+		loki, err = promtail.NewClientJson(conf)
+		if err != nil {
+			log.Fatal(fmt.Errorf("failed to generate promtail client from config: %w", err))
+		}
+	}
+
 	// to manage request concurrency limit
-	semaphorChan := make(chan struct{}, 4)
+	semaphorChan := make(chan struct{}, 20)
 
 	//
-	availableContentChan = make(chan *ListAvailableContentResponse, MAX_ENTRIES_CHAN_SIZE)
+	availableContentChan = make(chan ListAvailableContentResponse, MAX_ENTRIES_CHAN_SIZE)
 
 	// to hold responses
-	accumulatedContentChan = make(chan *RetrievedContentObject, MAX_ENTRIES_CHAN_SIZE)
+	retrievedContentObjects = make(chan interface{}, MAX_ENTRIES_CHAN_SIZE)
 
-	defer func() {
-		close(availableCount)
-		close(collectedCount)
+	defer func(t *Tracker) {
 		close(semaphorChan)
 		close(availableContentChan)
-		close(accumulatedContentChan)
-	}()
+		close(retrievedContentObjects)
+
+		err := t.pruneHistory(time.Hour * 24 * 14)
+		if err != nil {
+			log.Println(err)
+		}
+	}(tracker)
 
 	pubId = uuid.New().String()
 	//pubId = ""
@@ -194,18 +188,35 @@ func runFunc(context *cli.Context) error {
 		}
 	}
 
+	var outputFile *fileOutputWrapper
+
+	if filePath := context.String("output_file"); filePath != "" {
+		outputFile = &fileOutputWrapper{filePath: filePath}
+		err := outputFile.open()
+		if err != nil {
+			return err
+		}
+		defer func(file *fileOutputWrapper) {
+			err := file.close()
+			if err != nil {
+
+			}
+		}(outputFile)
+	}
 loop:
 	for {
 		select {
-		case result := <-accumulatedContentChan:
+		case result := <-retrievedContentObjects:
 			wg.Add(1)
-			//if context.Bool("debug") {
-			//	log.Printf("received content: %v from channel;  collectedREsult count at %v", result.Workload, collectedContentCount)
-			//}
-
-			go func(waitGroup *sync.WaitGroup, content *RetrievedContentObject, fileOutput string, useLoki bool, lokiOutput *promtail.Client) {
+			go func(waitGroup *sync.WaitGroup, content interface{}, fileOutput *fileOutputWrapper, useLoki bool, lokiOutput promtail.Client) {
 				defer waitGroup.Done()
-				jsonObj, err := json.Marshal(*content)
+				jsonObj, err := json.Marshal(&content)
+				if len(jsonObj) == 0 {
+					log.Printf("Encountered zero length marshalled json from object, possibly disposed before print?: %v\n", content)
+					return
+				} else if len(jsonObj) < 20 {
+					log.Printf("Encountered zero length marshalled json from object, possibly disposed before print?: %v\n", content)
+				}
 				if err != nil {
 					log.Print(err)
 					return
@@ -215,34 +226,37 @@ loop:
 					if err != nil {
 						log.Printf("error marshalling content object: %v", err)
 					}
-					(*lokiOutput).LogRaw(string(jsonObj), &map[string]string{})
+					lokiOutput.LogRaw(string(jsonObj), &map[string]string{}, promtail.INFO)
 				}
-				if fileOutput != "" {
-					//log.Println("writing to file")
-
-					file, err := os.OpenFile(fileOutput, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
-					defer func(file *os.File) {
-						err := file.Close()
-						if err != nil {
-							log.Print(err)
-						}
-					}(file)
+				if fileOutput != nil {
+					//log.Println("writing to outputFile")
+					_, err := fileOutput.writeBytes(append([]byte{'\n'}, jsonObj...))
 					if err != nil {
-						log.Print(err)
+						log.Fatalf("failed to write to file: %v", err)
 						return
 					}
-					_, err = file.Write([]byte{'\n'})
-					if err != nil {
-						log.Print(err)
-						return
-					}
-					_, err = file.WriteString(string(jsonObj))
-					if err != nil {
-						log.Fatal(err)
-					}
+					//file, err := os.OpenFile(fileOutput, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+					//defer func(file *os.File) {
+					//	err := file.Close()
+					//	if err != nil {
+					//		log.Print(err)
+					//	}
+					//}(file)
+					//if err != nil {
+					//	log.Print(err)
+					//	return
+					//}
+					//_, err = file.Write([]byte{'\n'})
+					//if err != nil {
+					//	log.Print(err)
+					//	return
+					//}
+					//_, err = file.WriteString(string(jsonObj))
+					//if err != nil {
+					//	log.Fatal(err)
+					//}
 				}
-				<-collectedCount
-			}(&wg, result, context.String("output_file"), context.Bool("loki_output"), &loki)
+			}(&wg, result, outputFile, context.Bool(useLokiFlagString), loki)
 			//continue // we want to prioritize flushing out accumulated content
 
 		case result := <-availableContentChan:
@@ -255,11 +269,11 @@ loop:
 				return err
 			}
 			wg.Add(1)
-			go func(contentUri *url.URL, group *sync.WaitGroup) {
+			go func(contentUri *url.URL, group *sync.WaitGroup, retrievedcontentChannel chan interface{}) {
 				//var regOpts = compileListQueryOptions(nil)
 				nextPageUri := contentUri.String()
 				var err error
-				var thisBatch []RetrievedContentObject
+				var thisBatch []interface{}
 				for {
 
 					if err != nil {
@@ -267,8 +281,7 @@ loop:
 
 					}
 					for _, retrievedContentObject := range thisBatch {
-						collectedCount <- struct{}{}
-						accumulatedContentChan <- &retrievedContentObject
+						retrievedcontentChannel <- &retrievedContentObject
 					}
 
 					if nextPageUri == "" {
@@ -277,7 +290,6 @@ loop:
 					newUrl, err := url.Parse(nextPageUri)
 					if err != nil {
 						log.Printf("Error encountered attempting to parse: %v", nextPageUri)
-						log.Fatal(err)
 					}
 					// semephorChan for http request concurrency limiting
 					semaphorChan <- struct{}{}
@@ -300,75 +312,65 @@ loop:
 				}
 
 				group.Done()
-			}(contentUri, &wg)
-			<-availableCount
+			}(contentUri, &wg, retrievedContentObjects)
 			continue
 		default:
 			break
 		}
-		if len(accumulatedContentChan) == 0 && len(availableContentChan) == 0 && len(semaphorChan) == 0 {
-			if len(availableCount) > 0 {
-				continue
-			} else {
-				if len(availableCount) > 0 || len(collectedCount) > 0 {
-					continue
-				}
-				if len(accumulatedContentChan) == 0 && len(availableContentChan) == 0 {
-					break
-				}
+		if len(retrievedContentObjects) == 0 && len(availableContentChan) == 0 && len(semaphorChan) == 0 {
+
+			if len(retrievedContentObjects) == 0 && len(availableContentChan) == 0 {
+				break
 			}
 
 		}
 
 	}
 
-	if len(availableCount) > 0 || len(collectedCount) > 0 || len(semaphorChan) > 0 {
+	if len(semaphorChan) > 0 {
 		goto loop
 	}
 	wg.Wait()
-	if len(availableCount) > 0 || len(collectedCount) > 0 || len(semaphorChan) > 0 {
+	if len(semaphorChan) > 0 {
 		goto loop
 	}
-	loki.Shutdown()
+	if context.Bool(useLokiFlagString) {
+		loki.Shutdown()
+	}
 	return nil
 
 }
 
-type RetrievedContentObject struct {
-	CreationTime                  string `json:"CreationTime"`
-	Id                            string `json:"Id"`
-	Operation                     string `json:"Operation"`
-	OrganizationId                string `json:"OrganizationId"`
-	RecordType                    int    `json:"RecordType"`
-	ResultStatus                  string `json:"ResultStatus"`
-	UserKey                       string `json:"UserKey"`
-	UserType                      int    `json:"UserType"`
-	Workload                      string `json:"Workload"`
-	ClientIP                      string `json:"ClientIP,omitempty"`
-	ObjectId                      string `json:"ObjectId"`
-	UserId                        string `json:"UserId"`
-	AzureActiveDirectoryEventType int    `json:"AzureActiveDirectoryEventType"`
-	ExtendedProperties            []struct {
-		Name  string `json:"Name"`
-		Value string `json:"Value"`
-	} `json:"ExtendedProperties,omitempty"`
-	Client      string `json:"Client,omitempty"`
-	LoginStatus int    `json:"LoginStatus,omitempty"`
-	UserDomain  string `json:"UserDomain,omitempty"`
-	Actor       []struct {
-		ID   string `json:"ID"`
-		Type int    `json:"Type"`
-	} `json:"Actor,omitempty"`
-	ActorContextId string `json:"ActorContextId,omitempty"`
-	InterSystemsId string `json:"InterSystemsId,omitempty"`
-	IntraSystemId  string `json:"IntraSystemId,omitempty"`
-	Target         []struct {
-		ID   string `json:"ID"`
-		Type int    `json:"Type"`
-	} `json:"Target,omitempty"`
-	TargetContextId string `json:"TargetContextId,omitempty"`
-}
+func (g *ApiClient) getContentForType(contentType string, debug bool, waitGroup *sync.WaitGroup, ctx context.Context) error {
+	for i := 0; i < chunkCount; i++ {
+		waitGroup.Add(1)
+		go func(wg *sync.WaitGroup, idx int, contentType string, ctime time.Time, debug bool, ctx context.Context, availcontentChan chan ListAvailableContentResponse) {
+			// add 'token' to channel to keep track of concurrency (will block if concurrency limit is met
+			//semaphorChan <- struct{}{}
+			offset := time.Duration(chunkDuration.Nanoseconds() * (int64)(idx))
+			startTime := ctime.Add(-offset).Add(-chunkDuration)
+			endTime := ctime.Add(-offset)
 
+			availContent, err := g.ListAvailableContent(startTime, endTime, contentType, ctx)
+			if err != nil {
+				log.Fatal(err)
+			}
+			for _, contentResponse := range availContent {
+				if _, loaded := tracker.hashSet.GetOrInsert(contentResponse.ContentUri, currentTimeUnixString); !loaded {
+					availcontentChan <- contentResponse
+				} else {
+					log.Printf("duplicate entry found %v \n", contentResponse.ContentUri)
+				}
+				// otherwise, it was already fetched
+			}
+			// remove token from semaphor to allow another to start
+			//<-semaphorChan
+
+			wg.Done()
+		}(waitGroup, i, contentType, currentTime, debug, ctx, availableContentChan)
+	}
+	return nil
+}
 func (g *ApiClient) ListAvailableContent(startDateTime, endDateTime time.Time, contentType string, ctx context.Context, opts ...ListQueryOption) ([]ListAvailableContentResponse, error) {
 	//resource := fmt.Sprintf("/subscriptions/content")//?contentType={ContentType}&amp;startTime={0}&amp;endTime={1}")
 	//const resource = "subscriptions/content"

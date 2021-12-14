@@ -29,12 +29,6 @@ type clientJson struct {
 	hashMap *hashmap.HashMap
 }
 
-//type intermediateEntry struct {
-//	Labels map[string]string
-//	Line string
-//	Ts time.Time
-//}
-
 type lokiStreamWithLabels struct {
 	Labels map[string]string `json:"stream"`
 	Values [][]string        `json:"values"`
@@ -53,7 +47,7 @@ func NewClientJson(conf ClientConfig) (Client, error) {
 		quit:    make(chan struct{}),
 		entries: make(chan *jsonLogEntry, LOG_ENTRIES_CHAN_SIZE),
 		client: httpClient{
-			parent: http.Client{Timeout: time.Second * 10},
+			parent: http.Client{Timeout: time.Second * 20},
 		},
 		hashMap: hashmap.New(HASHMAP_INIT_SIZE),
 	}
@@ -81,47 +75,13 @@ func (c *clientJson) Errorf(format string, labels *map[string]string, args ...in
 	c.log(format, ERROR, "Error: ", labels, args...)
 }
 
-//func (c *clientJson) LogF(format string,labels *map[string]string, args ...interface{})  {
-//	c.log(format, INFO, "", )
-//}
-//
-//func (c *clientProto) logWithLabels(lineFormat string, level LogLevel, prefix string, labels map[string]string) {
-//	var sb strings.Builder
-//	sb.WriteByte('{')
-//	isFirst := true
-//	for key, val := range labels {
-//		if isFirst {
-//			isFirst = false
-//		} else {
-//			sb.WriteByte(',')
-//		}
-//		sb.WriteString(fmt.Sprintf("%v=\"%v\"", key, val))
-//	}
-//	sb.Write([]byte("}"))
-//	s := logproto.EntryAdapter{
-//		Timestamp: time.Time{},
-//		Line:      "",
-//	}
-//	sa := logproto.StreamAdapter{
-//		Labels:  sb.String(),
-//		Entries: nil,
-//	}
-//}
-func (c *clientJson) LogRaw(message string, labels *map[string]string) {
-
-	//var strEntry = []*jsonLogEntry{{Ts: time.Now(), Line: message, level: ALL}}
+func (c *clientJson) LogRaw(message string, labels *map[string]string, level LogLevel) {
 	mergedKeys, _ := mergeKeys_string(*labels, c.config.Labels)
-	labelString := *makeLabelString2(&mergedKeys)
-	//actual, loaded := c.hashMap.GetOrInsert(labelString, &strEntry)
-	//if loaded {
-	//	actual = append((actual).([]*jsonLogEntry), strEntry...)
-	//}
-
 	c.entries <- &jsonLogEntry{
 		Ts:      time.Now(),
 		Line:    message,
-		level:   DEBUG,
-		labels:  &labelString,
+		level:   level,
+		labels:  makeLabelString2(&mergedKeys),
 		labels2: &mergedKeys,
 	}
 }
@@ -130,18 +90,11 @@ func (c *clientJson) log(format string, level LogLevel, prefix string, labels *m
 	if (level >= c.config.SendLevel) || (level >= c.config.PrintLevel) {
 		//var strEntry = []*jsonLogEntry{{Ts: time.Now(), Line: fmt.Sprintf(prefix+format, args...), level: level}}
 		mergedKeys, _ := mergeKeys_string(*labels, c.config.Labels)
-		labelString := *makeLabelString2(&mergedKeys)
-		//labelString := *makeLabelString(labels, &c.config.Labels)
-		//actual, loaded := c.hashMap.GetOrInsert(labelString, &strEntry)
-		//if loaded {
-		//	actual = append((actual).([]*jsonLogEntry), strEntry...)
-		//}
-
 		c.entries <- &jsonLogEntry{
 			Ts:     time.Now(),
 			Line:   fmt.Sprintf(prefix+format, args...),
 			level:  level,
-			labels: &labelString,
+			labels: makeLabelString2(&mergedKeys),
 		}
 	}
 }
@@ -149,7 +102,9 @@ func (c *clientJson) log(format string, level LogLevel, prefix string, labels *m
 func (c *clientJson) Shutdown() {
 	log.Println("Shutting down loki, waiting for waitGroup to complete")
 	close(c.quit)
-	c.waitGroup.Wait()
+
+	// let the run2() defer func call Wait() on the waitgroup
+	//c.waitGroup.Wait()
 }
 func (c *clientJson) run2() {
 	maxWait := time.NewTimer(c.config.BatchWait)
@@ -172,22 +127,15 @@ func (c *clientJson) run2() {
 				log.Print(entry.Line)
 			}
 			if entry.level >= c.config.SendLevel {
-				//var streamEntry2 []*[]string = []*[]string{&[]string{strconv.FormatInt(entry.Ts.UnixNano(), 10), entry.Line}}
-				//var streamEntry = []*jsonLogEntry{entry}
-				//var streamEntry2 = intermediateEntry{Labels: *entry.labels2, Line: entry.Line, Ts: entry.Ts}
 				line := []string{strconv.FormatInt(entry.Ts.UnixNano(), 10), entry.Line}
 				var strmWLbls = lokiStreamWithLabels{
 					Labels: *entry.labels2,
 					Values: [][]string{line},
 				}
-				actual, loaded := c.hashMap.GetOrInsert(*entry.labels, &strmWLbls)
-				if loaded {
-					vals := *((actual).(*lokiStreamWithLabels))
-					vals.Values = append(vals.Values, line)
-					//labels := (actual).(lokiStreamWithLabels).Labels
-					//labels, err := mergeKeys_string(labels, *entry.labels2)
-
-					//actual = append((actual).([]*jsonLogEntry), streamEntry2...)
+				//actual, loaded := c.hashMap.GetOrInsert(*entry.labels, strmWLbls)
+				if actual, loaded := c.hashMap.GetOrInsert(*entry.labels, &strmWLbls); loaded {
+					(*(actual.(*lokiStreamWithLabels))).Values = append((*(actual.(*lokiStreamWithLabels))).Values, line)
+					//c.hashMap.Set(entry.labels,append((actual).([]logproto.Entry), streamEntry...))
 				}
 				batchSize++
 				if batchSize >= c.config.BatchEntriesNumber {
@@ -211,13 +159,18 @@ func (c *clientJson) run2() {
 }
 
 func (c *clientJson) flush() {
+	l := hashmap.NewList()
+	l.Head()
 	defer c.waitGroup.Done()
 	var streams []lokiStreamWithLabels
 	for entry := range c.hashMap.Iter() {
-		streams = append(streams, *(entry.Value).(*lokiStreamWithLabels))
+		streams = append(
+			streams,
+			*((entry.Value).(*lokiStreamWithLabels)),
+		)
 		c.hashMap.Del(entry.Key)
 	}
-	jsonMsg, err := json.Marshal(lokiMsg{
+	jsonMsg, err := json.Marshal(&lokiMsg{
 		Streams: streams,
 	})
 	if err != nil {

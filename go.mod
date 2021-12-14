@@ -2,7 +2,7 @@ module o365_management_api
 
 go 1.17
 
-replace k8s.io/client-go => k8s.io/client-go v12.0.0+incompatible
+replace k8s.io/client-go => k8s.io/client-go v12.0.0+incompatible // indirect
 
 require (
 	github.com/google/uuid v1.3.0
@@ -12,6 +12,7 @@ require (
 
 require (
 	github.com/cornelk/hashmap v1.0.1
+	github.com/deckarep/golang-set v1.7.1
 	github.com/golang/snappy v0.0.4
 	github.com/grafana/loki v1.6.1
 )

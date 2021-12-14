@@ -24,7 +24,6 @@ const (
 	ERROR LogLevel = iota
 	// Maximum level, disables sending or printing
 	DISABLE LogLevel = iota
-	ALL     LogLevel = iota
 )
 
 type ClientConfig struct {
@@ -48,7 +47,7 @@ type Client interface {
 	//Logf(format string, labels *map[string]string, args ...interface{})
 
 	// LogRaw Writes log entry with pre-formatted line and arbitrary labels
-	LogRaw(message string, labels *map[string]string)
+	LogRaw(message string, labels *map[string]string, level LogLevel)
 	Shutdown()
 }
 
