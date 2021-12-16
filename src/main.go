@@ -17,7 +17,6 @@ import (
 	"time"
 )
 
-
 const MaxEntriesChanSize = 10000
 const lokiAddressFlag = "LokiAddress"
 
@@ -33,40 +32,40 @@ var chunkCount int
 func main() {
 	currentTime = time.Now().UTC()
 	currentTimeUnixString = strconv.FormatInt(currentTime.Unix(), 10)
-	chunkDuration = time.Hour*2
+	chunkDuration = time.Hour * 2
 	chunkCount = 1
 	flags := []cli.Flag{
 		&cli.StringFlag{
 			Name: "load",
 		},
 		&cli.BoolFlag{
-			Name: "daemonize",
+			Name:    "daemonize",
 			Aliases: []string{"z"},
 		},
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name: "RunInterval",
-			Value: "5m",
+			Name:    "RunInterval",
+			Value:   "5m",
 			EnvVars: []string{"APP_RUN_INTERVAL"},
-			}),
+		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
 			Name:        "TenantId",
 			Destination: &TenantID,
 			Aliases:     []string{"t"},
-			EnvVars: []string{"APP_TENANT_ID"},
+			EnvVars:     []string{"APP_TENANT_ID"},
 			//Required:    true,
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
 			Name:        "ApplicationId",
 			Aliases:     []string{"a"},
 			Destination: &ApplicationID,
-			EnvVars: []string{"APP_APPLICATION_ID"},
+			EnvVars:     []string{"APP_APPLICATION_ID"},
 			//Required:    true,
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
 			Name:        "ClientSecret",
 			Aliases:     []string{"c"},
 			Destination: &ClientSecret,
-			EnvVars: []string{"APP_CLIENT_SECRET"},
+			EnvVars:     []string{"APP_CLIENT_SECRET"},
 			//Required:    true,
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
@@ -74,15 +73,15 @@ func main() {
 			Aliases:   []string{"f"},
 			TakesFile: true,
 			Required:  false,
-			EnvVars: []string{"APP_OUTPUT_FILE"},
+			EnvVars:   []string{"APP_OUTPUT_FILE"},
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
 			Name:     "PublisherId",
 			Required: false,
-			EnvVars: []string{"APP_PUBLISHER_ID"},
+			EnvVars:  []string{"APP_PUBLISHER_ID"},
 		}),
 		altsrc.NewBoolFlag(&cli.BoolFlag{
-			Name: "General",
+			Name:    "General",
 			EnvVars: []string{"APP_GENERAL"},
 		}),
 
@@ -97,7 +96,7 @@ func main() {
 			EnvVars: []string{"APP_AZUREAD"},
 		}),
 		altsrc.NewBoolFlag(&cli.BoolFlag{
-			Name: "Sharepoint",
+			Name:    "Sharepoint",
 			EnvVars: []string{"APP_SHAREPOINT"},
 		}),
 		altsrc.NewBoolFlag(&cli.BoolFlag{Name: "DLP",
@@ -109,15 +108,15 @@ func main() {
 			EnvVars: []string{"APP_DEBUG"},
 		}),
 		altsrc.NewStringSliceFlag(&cli.StringSliceFlag{
-			Name:        "StaticLabel",
-			Aliases:     []string{"l"},
+			Name:    "StaticLabel",
+			Aliases: []string{"l"},
 			EnvVars: []string{"APP_STATIC_LABELS"},
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name: "HistoryFile",
+			Name:      "HistoryFile",
 			TakesFile: true,
-			EnvVars: []string{"APP_HISTORY_FILE"},
-			Value: ".history",
+			EnvVars:   []string{"APP_HISTORY_FILE"},
+			Value:     ".history",
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
 			Name:    lokiAddressFlag,
@@ -129,8 +128,8 @@ func main() {
 		EnableBashCompletion: true,
 		Name:                 "gcli",
 		Before:               altsrc.InitInputSourceWithContext(flags, altsrc.NewYamlSourceFromFlagFunc("load")),
-		Flags: flags,
-		Action: runMain,
+		Flags:                flags,
+		Action:               runMain,
 	}
 	err := app.RunContext(context.Background(), os.Args)
 	if err != nil {
@@ -139,7 +138,6 @@ func main() {
 	log.Printf("Execution Time: %vs", time.Since(currentTime).Seconds())
 
 }
-
 
 var availableContentChan chan ListAvailableContentResponse
 var retrievedContentObjects chan interface{}
@@ -169,7 +167,6 @@ func runMain(context *cli.Context) error {
 		log.Printf("static labels set to: %v\n", staticLables)
 	}
 	if context.Bool("daemonize") {
-
 
 		//cntxt := &daemon.Context{
 		//	PidFileName: "opi.pid",
@@ -201,19 +198,17 @@ func runMain(context *cli.Context) error {
 		for {
 			err = runFunc(context)
 			if err != nil {
-				log.Fatal("error",err)
+				log.Fatal("error", err)
 				return err
 			}
 			log.Printf("Sleeping for %v", sleepDuration)
 			time.Sleep(sleepDuration)
 		}
 
-
 	} else {
 		return runFunc(context)
 
 	}
-
 
 }
 
@@ -360,7 +355,7 @@ loop:
 						return
 					}
 				}
-			}(&wg, result, outputFile, ""!=context.String(lokiAddressFlag), loki)
+			}(&wg, result, outputFile, "" != context.String(lokiAddressFlag), loki)
 			//continue // we want to prioritize flushing out accumulated content
 
 		case result := <-availableContentChan:
@@ -439,7 +434,7 @@ loop:
 	if len(semaphorChan) > 0 || len(retrievedContentObjects) > 0 || len(availableContentChan) > 0 {
 		goto loop
 	}
-	if ""!=context.String(lokiAddressFlag) {
+	if "" != context.String(lokiAddressFlag) {
 		loki.Shutdown()
 	}
 	return nil
@@ -497,7 +492,7 @@ func (g *ApiClient) ListAvailableContent(startDateTime, endDateTime time.Time, c
 
 	for {
 		if err != nil {
-			log.Printf("Error encountered attempting to parse: %v", nextPageUri)
+			log.Printf("Error encountered attempting to parse: %v", logStringSani(nextPageUri))
 			return nil, err
 		}
 		availableContent = append(availableContent, thisBatch...)

@@ -117,9 +117,6 @@ func NewApiClientWithCustomEndpoint(tenantID, applicationID, clientSecret string
 	return &g, nil
 }
 
-type object struct {
-}
-
 // performRequestWithoutMarshal performs the http request but returns the response as []byte
 func (g *ApiClient) performRequestForUnknown(req *http.Request, response *[]byte) (nextPageUri string, err error) {
 	httpClient := &http.Client{
@@ -150,7 +147,7 @@ func (g *ApiClient) performRequest(req *http.Request, v interface{}) (string, er
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("HTTP response error: %v of http.Request: %v", err, req.URL)
+		return "", fmt.Errorf("HTTP response error: %v of http.Request: %v", err, logStringSani(req.URL.String()))
 	}
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
@@ -277,7 +274,7 @@ func (g *ApiClient) refreshToken() error {
 	req, err := http.NewRequest("POST", u.String(), bytes.NewBufferString(data.Encode()))
 
 	if err != nil {
-		return fmt.Errorf("HTTP Request Error: %v", err)
+		return fmt.Errorf("HTTP Request Error: %v", logStringSani(err.Error()))
 	}
 
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
