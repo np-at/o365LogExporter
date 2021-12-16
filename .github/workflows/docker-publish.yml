@@ -96,7 +96,7 @@ jobs:
         uses: Azure/container-scan@v0.1
         with:
           # Docker image to scan
-          image-name: ghcr.io/np-at/${{ env.IMAGE_NAME }}:latest
+          image-name: ghcr.io/np-at/${{ env.IMAGE_NAME }}:main
           # Minimum severities of vulnerabilities to be displayed (UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL)
           severity-threshold: LOW
 #           # Username to authenticate to the Docker registry
