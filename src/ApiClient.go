@@ -147,7 +147,7 @@ func (g *ApiClient) performRequest(req *http.Request, v interface{}) (string, er
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("HTTP response error: %v of http.Request: %v", err, logStringSani(req.URL.String()))
+		return "", fmt.Errorf("HTTP response error: %w", err)
 	}
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
@@ -161,7 +161,7 @@ func (g *ApiClient) performRequest(req *http.Request, v interface{}) (string, er
 		return "", fmt.Errorf("StatusCode is not OK: %v. Body: %v ", resp.StatusCode, string(body))
 	}
 	if err != nil {
-		return "", fmt.Errorf("HTTP response read error: %v of http.Request: %v", err, req.URL)
+		return "", fmt.Errorf("HTTP response read error: %w", err)
 	}
 
 	// no content returned when http PATCH or DELETE is used, e.g. User.DeleteUser()
