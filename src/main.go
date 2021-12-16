@@ -123,6 +123,10 @@ func main() {
 			Aliases: []string{"loki"},
 			EnvVars: []string{"APP_LOKI_ADDRESS"},
 		}),
+		altsrc.NewStringSliceFlag(&cli.StringSliceFlag{
+			Name:    "JMESLabels",
+			EnvVars: []string{"APP_JMES_LABELS"},
+		}),
 	}
 	app := &cli.App{
 		EnableBashCompletion: true,
@@ -143,6 +147,7 @@ var availableContentChan chan ListAvailableContentResponse
 var retrievedContentObjects chan interface{}
 
 var tracker *Tracker
+var jmesLabels = map[string]string{}
 
 func runMain(context *cli.Context) error {
 	if context.Bool("debug") {
@@ -166,6 +171,17 @@ func runMain(context *cli.Context) error {
 	if staticLables := context.StringSlice("StaticLabel"); len(staticLables) > 0 {
 		log.Printf("static labels set to: %v\n", staticLables)
 	}
+	if dynamicLabels := context.StringSlice("JMESLabels"); len(dynamicLabels) > 0 {
+		log.Printf("JMESPath labels set to: %v", dynamicLabels)
+		for _, label := range dynamicLabels {
+			k, v, err := splitStringOnChar(label, '=')
+			if err != nil {
+				log.Fatal(err)
+			}
+			jmesLabels[k] = v
+		}
+	}
+
 	if context.Bool("daemonize") {
 
 		//cntxt := &daemon.Context{
@@ -327,37 +343,7 @@ loop:
 		select {
 		case result := <-retrievedContentObjects:
 			wg.Add(1)
-			go func(waitGroup *sync.WaitGroup, content interface{}, fileOutput *fileOutputWrapper, useLoki bool, lokiOutput promtail.Client) {
-				defer waitGroup.Done()
-				jsonObj, err := json.Marshal(&content)
-				if len(jsonObj) == 0 {
-					log.Printf("Encountered zero length marshalled json from object, possibly disposed before print?: %v\n", content)
-					return
-				} else if len(jsonObj) < 20 {
-					log.Printf("Encountered zero length marshalled json from object, possibly disposed before print?: %v\n", content)
-				}
-				if err != nil {
-					log.Print(err)
-					return
-				}
-				if useLoki {
-					//log.Println("sending to loki")
-					if err != nil {
-						log.Printf("error marshalling content object: %v", err)
-					}
-					lokiOutput.LogRaw(string(jsonObj), &map[string]string{}, promtail.INFO)
-				}
-				if fileOutput != nil {
-					//log.Println("writing to outputFile")
-					_, err := fileOutput.writeBytes(append([]byte{'\n'}, jsonObj...))
-					if err != nil {
-						log.Fatalf("failed to write to file: %v", err)
-						return
-					}
-				}
-			}(&wg, result, outputFile, "" != context.String(lokiAddressFlag), loki)
-			//continue // we want to prioritize flushing out accumulated content
-
+			go processRetrievedObject(&wg, result, outputFile, "" != context.String(lokiAddressFlag), loki)
 		case result := <-availableContentChan:
 			if context.Bool("debug") {
 				log.Printf("received content with uri %v from channel", result.ContentUri)
@@ -368,51 +354,7 @@ loop:
 				return err
 			}
 			wg.Add(1)
-			go func(contentUri *url.URL, group *sync.WaitGroup, retrievedcontentChannel chan interface{}) {
-				//var regOpts = compileListQueryOptions(nil)
-				nextPageUri := contentUri.String()
-				var err error
-				var thisBatch []interface{}
-				for {
-
-					if err != nil {
-						log.Fatal(err)
-
-					}
-					for _, retrievedContentObject := range thisBatch {
-						retrievedcontentChannel <- &retrievedContentObject
-					}
-
-					if nextPageUri == "" {
-						break
-					}
-					newUrl, err := url.Parse(nextPageUri)
-					if err != nil {
-						log.Printf("Error encountered attempting to parse: %v", nextPageUri)
-					}
-					// semephorChan for http request concurrency limiting
-					semaphorChan <- struct{}{}
-					//log.Printf("making request to uri: %v", newUrl.String())
-					req, err := http.NewRequestWithContext(context.Context, http.MethodGet, newUrl.String(), nil)
-					if err != nil {
-
-						fmt.Printf("HTTP request error: %v", err)
-					}
-
-					// Deal with request Headers
-					req.Header.Add("Content-Type", "application/json")
-					req.Header.Add("Authorization", client.token.GetAccessToken())
-
-					nextPageUri, err = client.performRequest(req, &thisBatch)
-					<-semaphorChan
-				}
-				if err != nil {
-					log.Println(err)
-				}
-
-				group.Done()
-			}(contentUri, &wg, retrievedContentObjects)
-			continue
+			go processAvailableObject(contentUri, &wg, retrievedContentObjects, semaphorChan, client, context)
 		default:
 			break
 		}
@@ -440,7 +382,89 @@ loop:
 	return nil
 
 }
+func processAvailableObject(contentUri *url.URL, group *sync.WaitGroup, retrievedcontentChannel chan interface{}, semephorChan chan struct{}, client *ApiClient, cliContext *cli.Context) {
+	//var regOpts = compileListQueryOptions(nil)
+	nextPageUri := contentUri.String()
+	var err error
+	var thisBatch []map[string]interface{}
+	for {
 
+		if err != nil {
+			log.Fatal(err)
+
+		}
+		for _, retrievedContentObject := range thisBatch {
+			retrievedcontentChannel <- &retrievedContentObject
+		}
+
+		if nextPageUri == "" {
+			break
+		}
+		newUrl, err := url.Parse(nextPageUri)
+		if err != nil {
+			log.Printf("Error encountered attempting to parse: %v", nextPageUri)
+		}
+		// semephorChan for http request concurrency limiting
+		semephorChan <- struct{}{}
+		//log.Printf("making request to uri: %v", newUrl.String())
+		req, err := http.NewRequestWithContext(cliContext.Context, http.MethodGet, newUrl.String(), nil)
+		if err != nil {
+
+			fmt.Printf("HTTP request error: %v", err)
+		}
+
+		// Deal with request Headers
+		req.Header.Add("Content-Type", "application/json")
+		req.Header.Add("Authorization", client.token.GetAccessToken())
+
+		nextPageUri, err = client.performRequest(req, &thisBatch)
+		<-semephorChan
+	}
+	if err != nil {
+		log.Println(err)
+	}
+
+	group.Done()
+}
+func processRetrievedObject(waitGroup *sync.WaitGroup, content interface{}, fileOutput *fileOutputWrapper, useLoki bool, lokiOutput promtail.Client) {
+	defer waitGroup.Done()
+	var labels = map[string]string{}
+
+	jsonObj, err := json.Marshal(&content)
+	if err != nil {
+		log.Println(err)
+	}
+	err = extractJMESLabels(jsonObj, &jmesLabels, &labels)
+	if err != nil {
+		log.Println(err)
+	}
+
+	if len(jsonObj) == 0 {
+		log.Printf("Encountered zero length marshalled json from object, possibly disposed before print?: %v\n", content)
+		return
+	} else if len(jsonObj) < 20 {
+		log.Printf("Encountered zero length marshalled json from object, possibly disposed before print?: %v\n", content)
+	}
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	if useLoki {
+		//log.Println("sending to loki")
+		if err != nil {
+			log.Printf("error marshalling content object: %v", err)
+		}
+		lokiOutput.LogRaw(string(jsonObj), labels, promtail.INFO)
+	}
+	if fileOutput != nil {
+		//log.Println("writing to outputFile")
+		_, err := fileOutput.writeBytes(append([]byte{'\n'}, jsonObj...))
+		if err != nil {
+			log.Fatalf("failed to write to file: %v", err)
+			return
+		}
+	}
+}
 func (g *ApiClient) getContentForType(contentType string, debug bool, waitGroup *sync.WaitGroup, ctx context.Context) error {
 	for i := 0; i < chunkCount; i++ {
 		waitGroup.Add(1)

@@ -75,10 +75,20 @@ func (c *clientJson) Errorf(format string, labels *map[string]string, args ...in
 	c.log(format, ERROR, "Error: ", labels, args...)
 }
 
-func (c *clientJson) LogRaw(message string, labels *map[string]string, level LogLevel) {
-	mergedKeys, _ := mergeKeys_string(*labels, c.config.Labels)
+func (c *clientJson) LogRaw(message string, labels map[string]string, level LogLevel) {
+	var ts time.Time
+	var err error
+	if k, ok := labels["_ts"]; ok {
+		ts, err = time.Parse("2006-01-02T15:04:05", k)
+		if err != nil {
+			log.Printf("Error parsing incoming time, using current time instead")
+			ts = time.Now().UTC()
+		}
+		delete(labels, "_ts")
+	}
+	mergedKeys, _ := mergeKeys_string(labels, c.config.Labels)
 	c.entries <- &jsonLogEntry{
-		Ts:      time.Now(),
+		Ts:      ts,
 		Line:    message,
 		level:   level,
 		labels:  makeLabelString2(&mergedKeys),

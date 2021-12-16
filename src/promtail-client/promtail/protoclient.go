@@ -26,11 +26,21 @@ type clientProto struct {
 	hashMap   *hashmap.HashMap
 }
 
-func (c *clientProto) LogRaw(message string, labels *map[string]string, level LogLevel) {
-	mergedKeys, _ := mergeKeys_string(*labels, c.config.Labels)
+func (c *clientProto) LogRaw(message string, labels map[string]string, level LogLevel) {
+	var ts time.Time
+	var err error
+	if k, ok := labels["_ts"]; ok {
+		ts, err = time.Parse("2006-01-02T15:04:05", k)
+		if err != nil {
+			log.Printf("Error parsing incoming time, using current time instead")
+			ts = time.Now().UTC()
+		}
+		delete(labels, "_ts")
+	}
+	mergedKeys, _ := mergeKeys_string(labels, c.config.Labels)
 	c.entries <- protoLogEntry{
 		entry: logproto.Entry{
-			Timestamp: time.Now().UTC(),
+			Timestamp: ts,
 			Line:      message,
 		},
 		level:  level,

@@ -47,7 +47,7 @@ type Client interface {
 	//Logf(format string, labels *map[string]string, args ...interface{})
 
 	// LogRaw Writes log entry with pre-formatted line and arbitrary labels
-	LogRaw(message string, labels *map[string]string, level LogLevel)
+	LogRaw(message string, labels map[string]string, level LogLevel)
 	Shutdown()
 }
 
