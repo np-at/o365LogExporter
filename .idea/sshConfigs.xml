@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="SshConfigs">
-    <configs>
-      <sshConfig connectionConfig="{&quot;serverAliveInterval&quot;:300}" host="192.168.1.5" id="88555aa0-5779-4fcf-8bb9-f08c55ea074b" keyPath="M:\ssh_keys_llap\fhub" port="22" nameFormat="DESCRIPTIVE" username="fhub" useOpenSSHConfig="true" />
-    </configs>
-  </component>
-</project>
