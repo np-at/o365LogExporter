@@ -23,7 +23,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/prometheus v1.8.2-0.20200727090838-6f296594a852 // indirect
 	github.com/russross/blackfriday/v2 v2.0.1 // indirect
-	github.com/sevlyar/go-daemon v0.1.5 // indirect
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	golang.org/x/net v0.0.0-20200707034311-ab3426394381 // indirect
 	golang.org/x/sys v0.0.0-20200724161237-0e2f3a69832c // indirect
