@@ -139,7 +139,6 @@ func (c *clientProto) run2() {
 					err := c.flush()
 					if err != nil {
 						log.Printf("Error encountered during flush operation: %s", err)
-						return
 					}
 					batchSize = 0
 					maxWait.Reset(c.config.BatchWait)
@@ -150,7 +149,6 @@ func (c *clientProto) run2() {
 				err := c.flush()
 				if err != nil {
 					log.Printf("Error encountered during flush operation: %s", err)
-					return
 				}
 				batchSize = 0
 			}
