@@ -1,5 +1,8 @@
 # promtail-client
 
+This contains a heavily modified version of [promtail-client](https://github.com/afiskon/promtail-client)
+
+
 Promtail client library. Promtail is an agent for [Loki](https://github.com/grafana/loki) logging system.
 
 This library supports both JSON and Protobuf APIs.
