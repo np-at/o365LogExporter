@@ -92,18 +92,18 @@ jobs:
 #         # against the sigstore community Fulcio instance.
 #         run: cosign sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
         
-      - name: Container image scan
-        uses: Azure/container-scan@v0.1
-        with:
-          # Docker image to scan
-          image-name: ghcr.io/${{ env.IMAGE_NAME }}:main
-          # Minimum severities of vulnerabilities to be displayed (UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL)
-          severity-threshold: LOW
-#           # Username to authenticate to the Docker registry
-          username: np-at # optional
-#           # Password to authenticate to the Docker registry
-#           password: # optional
-#           # Github token
-#           token: # default is ${{ github.token }}
-          # Add additional checks to ensure the image is secure and follows best practices and CIS standards
-          run-quality-checks: true # optional, default is true
+#       - name: Container image scan
+#         uses: Azure/container-scan@v0.1
+#         with:
+#           # Docker image to scan
+#           image-name: ghcr.io/${{ env.IMAGE_NAME }}:main
+#           # Minimum severities of vulnerabilities to be displayed (UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL)
+#           severity-threshold: LOW
+# #           # Username to authenticate to the Docker registry
+#           username: np-at # optional
+# #           # Password to authenticate to the Docker registry
+# #           password: # optional
+# #           # Github token
+# #           token: # default is ${{ github.token }}
+#           # Add additional checks to ensure the image is secure and follows best practices and CIS standards
+#           run-quality-checks: true # optional, default is true
