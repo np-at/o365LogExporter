@@ -17,8 +17,39 @@ import (
 	"time"
 )
 
+import "github.com/heptiolabs/healthcheck"
+
 const MaxEntriesChanSize = 10000
+
+const (
+	debugFlag          = "debug"
+	loadConfigFileFlag = "load"
+	runAsDaemonFlag    = "daemonize"
+	runIntervalFlag    = "RunInterval"
+	outputFileFlag     = "output_file"
+)
+
 const lokiAddressFlag = "LokiAddress"
+const (
+	clientSecretFlag  = "ClientSecret"
+	tenantIdFlag      = "TenantId"
+	applicationIdFlag = "ApplicationId"
+	publisherIdFlag   = "PublisherId"
+)
+
+const (
+	historyFileFlag = "HistoryFile"
+	jmesLabelsFlag  = "JMESLabels"
+	staticLabelFlag = "StaticLabel"
+)
+
+const (
+	getSharepointContentFlag = "Sharepoint"
+	getAzureAdContentFlag    = "Azure AD"
+	getGeneralContentFlag    = "General"
+	getExchangeContentFlag   = "Exchange"
+	getDLPContentFlag        = "DLP"
+)
 
 var TenantID string      // See https://docs.microsoft.com/en-us/azure/azure-resource-manager/resource-group-create-service-principal-portal#get-tenant-id
 var ApplicationID string // See https://docs.microsoft.com/en-us/azure/azure-resource-manager/resource-group-create-service-principal-portal#get-application-id-and-authentication-key
@@ -36,84 +67,83 @@ func main() {
 	chunkCount = 1
 	flags := []cli.Flag{
 		&cli.StringFlag{
-			Name: "load",
+			Name:      loadConfigFileFlag,
+			TakesFile: true,
 		},
 		&cli.BoolFlag{
-			Name:    "daemonize",
+			Name:    runAsDaemonFlag,
 			Aliases: []string{"z"},
 		},
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name:    "RunInterval",
+			Name:    runIntervalFlag,
 			Value:   "5m",
 			EnvVars: []string{"APP_RUN_INTERVAL"},
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name:        "TenantId",
+			Name:        tenantIdFlag,
 			Destination: &TenantID,
 			Aliases:     []string{"t"},
 			EnvVars:     []string{"APP_TENANT_ID"},
-			//Required:    true,
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name:        "ApplicationId",
+			Name:        applicationIdFlag,
 			Aliases:     []string{"a"},
 			Destination: &ApplicationID,
 			EnvVars:     []string{"APP_APPLICATION_ID"},
-			//Required:    true,
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name:        "ClientSecret",
+			Name:        clientSecretFlag,
 			Aliases:     []string{"c"},
 			Destination: &ClientSecret,
 			EnvVars:     []string{"APP_CLIENT_SECRET"},
-			//Required:    true,
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name:      "output_file",
+			Name:      outputFileFlag,
 			Aliases:   []string{"f"},
 			TakesFile: true,
 			Required:  false,
 			EnvVars:   []string{"APP_OUTPUT_FILE"},
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name:     "PublisherId",
+			Name:     publisherIdFlag,
 			Required: false,
 			EnvVars:  []string{"APP_PUBLISHER_ID"},
 		}),
 		altsrc.NewBoolFlag(&cli.BoolFlag{
-			Name:    "General",
+			Name:    getGeneralContentFlag,
 			EnvVars: []string{"APP_GENERAL"},
 		}),
 
 		altsrc.NewBoolFlag(&cli.BoolFlag{
-			Name:    "Exchange",
+			Name:    getExchangeContentFlag,
 			Aliases: []string{"exchange"},
 			EnvVars: []string{"APP_EXCHANGE"},
 		}),
 		altsrc.NewBoolFlag(&cli.BoolFlag{
-			Name:    "Azure Ad",
+			Name:    getAzureAdContentFlag,
 			Aliases: []string{"azuread"},
 			EnvVars: []string{"APP_AZUREAD"},
 		}),
 		altsrc.NewBoolFlag(&cli.BoolFlag{
-			Name:    "Sharepoint",
+			Name:    getSharepointContentFlag,
 			EnvVars: []string{"APP_SHAREPOINT"},
 		}),
-		altsrc.NewBoolFlag(&cli.BoolFlag{Name: "DLP",
+		altsrc.NewBoolFlag(&cli.BoolFlag{
+			Name:    getDLPContentFlag,
 			EnvVars: []string{"APP_DLP"}}),
 
 		altsrc.NewBoolFlag(&cli.BoolFlag{
-			Name:    "debug",
+			Name:    debugFlag,
 			Aliases: []string{"d"},
 			EnvVars: []string{"APP_DEBUG"},
 		}),
 		altsrc.NewStringSliceFlag(&cli.StringSliceFlag{
-			Name:    "StaticLabel",
+			Name:    staticLabelFlag,
 			Aliases: []string{"l"},
 			EnvVars: []string{"APP_STATIC_LABELS"},
 		}),
 		altsrc.NewStringFlag(&cli.StringFlag{
-			Name:      "HistoryFile",
+			Name:      historyFileFlag,
 			TakesFile: true,
 			EnvVars:   []string{"APP_HISTORY_FILE"},
 			Value:     ".history",
@@ -124,7 +154,7 @@ func main() {
 			EnvVars: []string{"APP_LOKI_ADDRESS"},
 		}),
 		altsrc.NewStringSliceFlag(&cli.StringSliceFlag{
-			Name:    "JMESLabels",
+			Name:    jmesLabelsFlag,
 			EnvVars: []string{"APP_JMES_LABELS"},
 		}),
 	}
@@ -150,26 +180,20 @@ var tracker *Tracker
 var jmesLabels = map[string]string{}
 
 func runMain(context *cli.Context) error {
+
 	if context.Bool("debug") {
 		log.Println("debug mode is enabled")
+		for _, flag := range context.FlagNames() {
+			if flagValue := context.Value(flag); flagValue == nil {
+				log.Printf("%v present;\n", flag)
+			} else {
+				log.Printf("%v = %v;\n", flag, flagValue)
+			}
+		}
 	}
-	if context.Bool("AzureAD") {
-		log.Println("AzureAD flag set to true")
-	}
-	if context.Bool("general") {
-		log.Println("general flag set to true")
-	}
-	if context.Bool("Exchange") {
-		log.Println("Exchange flag set to true")
-	}
-	if context.Bool("Sharepoint") {
-		log.Println("sharepoint flag set to true")
-	}
-	if context.Bool("DLP") {
-		log.Println("DLP flag set to true")
-	}
-	if staticLables := context.StringSlice("StaticLabel"); len(staticLables) > 0 {
-		log.Printf("static labels set to: %v\n", staticLables)
+
+	if staticLabels := context.StringSlice("StaticLabel"); len(staticLabels) > 0 {
+		log.Printf("static labels set to: %v\n", staticLabels)
 	}
 	if dynamicLabels := context.StringSlice("JMESLabels"); len(dynamicLabels) > 0 {
 		log.Printf("JMESPath labels set to: %v", dynamicLabels)
@@ -183,31 +207,20 @@ func runMain(context *cli.Context) error {
 	}
 
 	if context.Bool("daemonize") {
-
-		//cntxt := &daemon.Context{
-		//	PidFileName: "opi.pid",
-		//	PidFilePerm: 0644,
-		//	LogFileName: "opi.log",
-		//	LogFilePerm: 0640,
-		//	WorkDir:     "/app",
-		//	Args:        []string{"[o365_management_api]"},
-		//}
-		//defer func(cntxt *daemon.Context) {
-		//	err := cntxt.Release()
-		//	if err != nil {
-		//		log.Fatal(err)
-		//	}
-		//}(cntxt)
-		//d, err := cntxt.Reborn()
-		//if err != nil {
-		//	log.Fatal("unable to run: ", err)
-		//}
-		//if d != nil {
-		//	return err
-		//}
 		log.Println("starting as daemon")
+		health := healthcheck.NewHandler()
+
+		health.AddLivenessCheck("goroutine-threshold", healthcheck.GoroutineCountCheck(100))
+		health.AddLivenessCheck("gc-timeout", healthcheck.GCMaxPauseCheck(time.Second*3))
+		go func() {
+			err := http.ListenAndServe("0.0.0.0:8090", health)
+			if err != nil {
+				log.Fatalf("Error creating healthcheck http endpoint: %v", err)
+			}
+		}()
 		runInterval := context.String("RunInterval")
 		sleepDuration, err := time.ParseDuration(runInterval)
+
 		if err != nil {
 			log.Fatalf("Unable to parse duration value %v, run interval: %v", err, runInterval)
 		}
@@ -364,9 +377,7 @@ loop:
 				wg.Wait()
 				break
 			}
-
 		}
-
 	}
 
 	if len(semaphorChan) > 0 || len(retrievedContentObjects) > 0 || len(availableContentChan) > 0 {
@@ -388,15 +399,12 @@ func processAvailableObject(contentUri *url.URL, group *sync.WaitGroup, retrieve
 	var err error
 	var thisBatch []map[string]interface{}
 	for {
-
 		if err != nil {
 			log.Fatal(err)
-
 		}
 		for _, retrievedContentObject := range thisBatch {
 			retrievedcontentChannel <- &retrievedContentObject
 		}
-
 		if nextPageUri == "" {
 			break
 		}
@@ -409,10 +417,8 @@ func processAvailableObject(contentUri *url.URL, group *sync.WaitGroup, retrieve
 		//log.Printf("making request to uri: %v", newUrl.String())
 		req, err := http.NewRequestWithContext(cliContext.Context, http.MethodGet, newUrl.String(), nil)
 		if err != nil {
-
 			fmt.Printf("HTTP request error: %v", err)
 		}
-
 		// Deal with request Headers
 		req.Header.Add("Content-Type", "application/json")
 		req.Header.Add("Authorization", client.token.GetAccessToken())
