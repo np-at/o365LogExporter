@@ -63,8 +63,8 @@ var chunkCount int
 func main() {
 	currentTime = time.Now().UTC()
 	currentTimeUnixString = strconv.FormatInt(currentTime.Unix(), 10)
-	chunkDuration = time.Hour * 12
-	chunkCount = 2
+	chunkDuration = time.Hour * 2
+	chunkCount = 1
 	flags := []cli.Flag{
 		&cli.StringFlag{
 			Name:      loadConfigFileFlag,
@@ -218,11 +218,10 @@ func runMain(context *cli.Context) error {
 				log.Fatalf("Error creating healthcheck http endpoint: %v", err)
 			}
 		}()
-		runInterval := context.String(runIntervalFlag)
-		sleepDuration, err := time.ParseDuration(runInterval)
+		sleepDuration, err := time.ParseDuration(context.String(runIntervalFlag))
 
 		if err != nil {
-			log.Fatalf("Unable to parse duration value %v, run interval: %v", err, runInterval)
+			log.Fatalf("Unable to parse duration value %v, run interval: %v", err, sleepDuration)
 		}
 		for {
 			err = runFunc(context)
