@@ -63,8 +63,8 @@ var chunkCount int
 func main() {
 	currentTime = time.Now().UTC()
 	currentTimeUnixString = strconv.FormatInt(currentTime.Unix(), 10)
-	chunkDuration = time.Hour * 2
-	chunkCount = 1
+	chunkDuration = time.Hour * 12
+	chunkCount = 2
 	flags := []cli.Flag{
 		&cli.StringFlag{
 			Name:      loadConfigFileFlag,
@@ -161,7 +161,7 @@ func main() {
 	app := &cli.App{
 		EnableBashCompletion: true,
 		Name:                 "gcli",
-		Before:               altsrc.InitInputSourceWithContext(flags, altsrc.NewYamlSourceFromFlagFunc("load")),
+		Before:               altsrc.InitInputSourceWithContext(flags, altsrc.NewYamlSourceFromFlagFunc(loadConfigFileFlag)),
 		Flags:                flags,
 		Action:               runMain,
 	}
@@ -181,7 +181,7 @@ var jmesLabels = map[string]string{}
 
 func runMain(context *cli.Context) error {
 
-	if context.Bool("debug") {
+	if context.Bool(debugFlag) {
 		log.Println("debug mode is enabled")
 		for _, flag := range context.FlagNames() {
 			if flagValue := context.Value(flag); flagValue == nil {
@@ -192,10 +192,10 @@ func runMain(context *cli.Context) error {
 		}
 	}
 
-	if staticLabels := context.StringSlice("StaticLabel"); len(staticLabels) > 0 {
+	if staticLabels := context.StringSlice(staticLabelFlag); len(staticLabels) > 0 {
 		log.Printf("static labels set to: %v\n", staticLabels)
 	}
-	if dynamicLabels := context.StringSlice("JMESLabels"); len(dynamicLabels) > 0 {
+	if dynamicLabels := context.StringSlice(jmesLabelsFlag); len(dynamicLabels) > 0 {
 		log.Printf("JMESPath labels set to: %v", dynamicLabels)
 		for _, label := range dynamicLabels {
 			k, v, err := splitStringOnChar(label, '=')
@@ -206,7 +206,7 @@ func runMain(context *cli.Context) error {
 		}
 	}
 
-	if context.Bool("daemonize") {
+	if context.Bool(runAsDaemonFlag) {
 		log.Println("starting as daemon")
 		health := healthcheck.NewHandler()
 
@@ -218,7 +218,7 @@ func runMain(context *cli.Context) error {
 				log.Fatalf("Error creating healthcheck http endpoint: %v", err)
 			}
 		}()
-		runInterval := context.String("RunInterval")
+		runInterval := context.String(runIntervalFlag)
 		sleepDuration, err := time.ParseDuration(runInterval)
 
 		if err != nil {
@@ -245,11 +245,11 @@ func runFunc(context *cli.Context) error {
 
 	tracker = &Tracker{
 		hashSet:         hashmap.HashMap{},
-		historyFilePath: context.String("HistoryFile"),
+		historyFilePath: context.String(historyFileFlag),
 	}
 	tracker.load()
 	staticLabels := map[string]string{}
-	for _, staticLabel := range context.StringSlice("StaticLabel") {
+	for _, staticLabel := range context.StringSlice(staticLabelFlag) {
 		k, v, err := splitStringOnChar(staticLabel, '=')
 		if err != nil {
 			log.Fatal(err)
@@ -294,7 +294,7 @@ func runFunc(context *cli.Context) error {
 		}
 	}(tracker)
 
-	pubId = context.String("PublisherId")
+	pubId = context.String(publisherIdFlag)
 
 	client, err := NewApiClientWithCustomEndpoint(TenantID, ApplicationID, ClientSecret, AzureADAuthEndpointGlobal, ServiceRootEndpointGlobal)
 	if err != nil {
@@ -305,32 +305,32 @@ func runFunc(context *cli.Context) error {
 		return err
 	}
 
-	if context.Bool("General") {
-		err := client.getContentForType(ContentType_General, context.Bool("debug"), &wg, context.Context)
+	if context.Bool(getGeneralContentFlag) {
+		err := client.getContentForType(ContentType_General, context.Bool(debugFlag), &wg, context.Context)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-	if context.Bool("Exchange") {
-		err := client.getContentForType(ContentType_Exchange, context.Bool("debug"), &wg, context.Context)
+	if context.Bool(getExchangeContentFlag) {
+		err := client.getContentForType(ContentType_Exchange, context.Bool(debugFlag), &wg, context.Context)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-	if context.Bool("Azure Ad") {
-		err := client.getContentForType(ContentType_AAD, context.Bool("debug"), &wg, context.Context)
+	if context.Bool(getAzureAdContentFlag) {
+		err := client.getContentForType(ContentType_AAD, context.Bool(debugFlag), &wg, context.Context)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-	if context.Bool("Sharepoint") {
-		err := client.getContentForType(ContentType_Sharepoint, context.Bool("debug"), &wg, context.Context)
+	if context.Bool(getSharepointContentFlag) {
+		err := client.getContentForType(ContentType_Sharepoint, context.Bool(debugFlag), &wg, context.Context)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-	if context.Bool("DLP") {
-		err := client.getContentForType(ContentType_DLP, context.Bool("debug"), &wg, context.Context)
+	if context.Bool(getDLPContentFlag) {
+		err := client.getContentForType(ContentType_DLP, context.Bool(debugFlag), &wg, context.Context)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -338,7 +338,7 @@ func runFunc(context *cli.Context) error {
 
 	var outputFile *fileOutputWrapper
 
-	if filePath := context.String("output_file"); filePath != "" {
+	if filePath := context.String(outputFileFlag); filePath != "" {
 		outputFile = &fileOutputWrapper{filePath: filePath}
 		err := outputFile.open()
 		if err != nil {
@@ -358,7 +358,7 @@ loop:
 			wg.Add(1)
 			go processRetrievedObject(&wg, result, outputFile, "" != context.String(lokiAddressFlag), loki)
 		case result := <-availableContentChan:
-			if context.Bool("debug") {
+			if context.Bool(debugFlag) {
 				log.Printf("received content with uri %v from channel", result.ContentUri)
 			}
 			contentUri, err := url.ParseRequestURI(result.ContentUri)
