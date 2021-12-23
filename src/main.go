@@ -61,8 +61,7 @@ var chunkDuration time.Duration
 var chunkCount int
 
 func main() {
-	currentTime = time.Now().UTC()
-	currentTimeUnixString = strconv.FormatInt(currentTime.Unix(), 10)
+
 	chunkDuration = time.Hour * 2
 	chunkCount = 1
 	flags := []cli.Flag{
@@ -241,7 +240,8 @@ func runMain(context *cli.Context) error {
 }
 
 func runFunc(context *cli.Context) error {
-
+	currentTime = time.Now().UTC()
+	currentTimeUnixString = strconv.FormatInt(currentTime.Unix(), 10)
 	tracker = &Tracker{
 		hashSet:         hashmap.HashMap{},
 		historyFilePath: context.String(historyFileFlag),
