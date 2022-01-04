@@ -217,6 +217,11 @@ func runMain(context *cli.Context) error {
 				log.Fatalf("Error creating healthcheck http endpoint: %v", err)
 			}
 		}()
+		if context.Bool(debugFlag) {
+			if runInterval := context.String(runIntervalFlag); runInterval != "" {
+				log.Printf("run interval set to %v", runInterval)
+			}
+		}
 		sleepDuration, err := time.ParseDuration(context.String(runIntervalFlag))
 
 		if err != nil {

@@ -108,7 +108,6 @@ func (c *clientProto) run2() {
 			err := c.flush()
 			if err != nil {
 				log.Printf("Error encountered during flush operation: %s", err)
-				return
 			}
 		}
 
