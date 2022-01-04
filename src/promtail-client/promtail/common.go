@@ -71,6 +71,7 @@ func (client *httpClient) sendReq(method, url string, ctype string, reqBody *[]b
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
+			log.Println("error encountered closing response body: ")
 			log.Fatalln(err)
 		}
 	}(resp.Body)

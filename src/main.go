@@ -225,8 +225,9 @@ func runMain(context *cli.Context) error {
 		for {
 			err = runFunc(context)
 			if err != nil {
-				log.Fatal("error", err)
-				return err
+				log.Printf("error encountered during func run: %v", err)
+				log.Println(err)
+				//return err
 			}
 			log.Printf("Sleeping for %v", sleepDuration)
 			time.Sleep(sleepDuration)
@@ -399,7 +400,8 @@ func processAvailableObject(contentUri *url.URL, group *sync.WaitGroup, retrieve
 	var thisBatch []map[string]interface{}
 	for {
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			//log.Fatal(err)
 		}
 		for _, retrievedContentObject := range thisBatch {
 			retrievedcontentChannel <- &retrievedContentObject
@@ -482,7 +484,8 @@ func (g *ApiClient) getContentForType(contentType string, debug bool, waitGroup 
 
 			availContent, err := g.ListAvailableContent(startTime, endTime, contentType, ctx)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalln(fmt.Errorf("error encountered while attempting to list available content: %w", err))
+
 			}
 			for _, contentResponse := range availContent {
 				if _, loaded := tracker.hashSet.GetOrInsert(contentResponse.ContentUri, currentTimeUnixString); !loaded {
